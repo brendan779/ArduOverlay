@@ -3,61 +3,93 @@
 # ─────────────────────────────────────────────
 
 # ── Output video ─────────────────────────────
-OUTPUT_WIDTH   = 1920          # pixels (match your source footage)
-OUTPUT_HEIGHT  = 1080
+OUTPUT_WIDTH   = 3840
+OUTPUT_HEIGHT  = 2160
 OUTPUT_FPS     = 30
-OUTPUT_FILE    = "osd_overlay.mov"   # ProRes 4444 (transparent) .mov
+OUTPUT_FILE    = "osd_overlay.mov"
 
 # ── Timing ───────────────────────────────────
-# Offset in seconds to shift telemetry vs video start
-# Positive = telemetry starts this many seconds AFTER video
-# Negative = telemetry starts this many seconds BEFORE video
 TIME_OFFSET_SECONDS = 0.0
 
 # ── Fields to display ────────────────────────
-# Comment out any line to hide that field
 ENABLED_FIELDS = [
-    "speed",        # ground speed (m/s → converted to km/h)
-    "altitude",     # relative altitude (m)
-    "attitude",     # pitch / roll / yaw strip
-    "flight_mode",  # ArduPilot flight mode name
-    "messages",     # STATUSTEXT messages
+    "speed",
+    "airspeed",
+    "altitude",
+    "attitude",
+    "flight_mode",
+    "messages",
 ]
 
 # ── Lower-third layout ───────────────────────
-LOWER_THIRD_HEIGHT_FRACTION = 0.18   # fraction of frame height
-LOWER_THIRD_MARGIN_PX       = 48     # left/right/bottom margin
+LOWER_THIRD_HEIGHT_FRACTION = 0.12
+LOWER_THIRD_MARGIN_PX       = 96
 
 # ── Colours (R, G, B, A) — all 0.0–1.0 ──────
-COLOR_BG          = (0.05, 0.05, 0.05, 0.70)   # panel background
-COLOR_LABEL       = (0.65, 0.65, 0.65, 1.0)    # dim label text
-COLOR_VALUE       = (1.0,  1.0,  1.0,  1.0)    # bright value text
-COLOR_ACCENT      = (0.25, 0.72, 0.55, 1.0)    # teal accent line / highlights
-COLOR_MODE_BG     = (0.25, 0.72, 0.55, 0.85)   # flight mode pill background
-COLOR_MODE_TEXT   = (0.05, 0.05, 0.05, 1.0)    # flight mode pill text
-COLOR_MESSAGE     = (1.0,  0.85, 0.35, 1.0)    # status message text (amber)
-COLOR_WARN        = (1.0,  0.4,  0.1,  1.0)    # warning / error message
+COLOR_BG          = (0.05, 0.05, 0.05, 0.85)
+COLOR_LABEL       = (0.65, 0.65, 0.65, 1.0)
+COLOR_VALUE       = (1.0,  1.0,  1.0,  1.0)
+COLOR_ACCENT      = (0.69, 0.44, 0.63, 1.0)    # mauve
+COLOR_MODE_BG     = (0.69, 0.44, 0.63, 0.85)   # mauve
+COLOR_MODE_TEXT   = (1.0,  1.0,  1.0,  1.0)
+COLOR_MESSAGE     = (1.0,  0.85, 0.35, 1.0)
+COLOR_WARN        = (1.0,  0.4,  0.1,  1.0)
 
 # ── Typography ───────────────────────────────
-FONT_LABEL_SIZE  = 11    # pt
-FONT_VALUE_SIZE  = 22    # pt
-FONT_MODE_SIZE   = 13    # pt
-FONT_MSG_SIZE    = 12    # pt
+# Barlow Condensed is bundled (fonts/ folder). Falls back to DejaVu Sans Condensed.
+FONT_FAMILY      = "Barlow Condensed"
+FONT_LABEL_SIZE  = 11
+FONT_VALUE_SIZE  = 22
+FONT_MODE_SIZE   = 13
+FONT_MSG_SIZE    = 12
 
 # ── Attitude bar ─────────────────────────────
-ATTITUDE_BAR_THICKNESS = 3      # px
-PITCH_RANGE_DEG        = 45     # full-scale deflection each way
+ATTITUDE_BAR_THICKNESS = 3
+PITCH_RANGE_DEG        = 45
 ROLL_RANGE_DEG         = 60
 
 # ── Messages ─────────────────────────────────
-MESSAGE_DISPLAY_SECONDS = 4.0   # how long each message stays visible
-MESSAGE_MAX_CHARS       = 72    # truncate longer messages
+MESSAGE_DISPLAY_SECONDS = 4.0
+MESSAGE_MAX_CHARS       = 72
 
 # ── Speed units ──────────────────────────────
 # "kmh" | "mph" | "ms"
 SPEED_UNITS = "kmh"
 
 # ── Altitude datum ───────────────────────────
-# "relative"  = above home (ArduPilot default)
-# "absolute"  = AMSL (uses GPS altitude)
+# "relative" = above home   "absolute" = AMSL
 ALTITUDE_DATUM = "relative"
+
+# ── Map overlay (top-right corner) ───────────
+MAP_ENABLED       = True
+MAP_SIZE_FRACTION = 0.22        # fraction of frame width (square)
+MAP_MARGIN_PX     = 48          # margin from top-right corner
+
+# How many metres the full map width represents (zoom level)
+MAP_SPAN_M        = 600
+
+# Metres of recent GPS track to draw on map
+MAP_TRACK_WINDOW_M = 500
+
+# Tile source: "osm" (no key) or "esri_satellite" (no key)
+MAP_TILE_SOURCE   = "osm"
+
+# Google Maps Static API key — leave blank to use OSM tiles.
+# Get a key: https://console.cloud.google.com/ (Maps Static API)
+# When set, Google Maps satellite imagery is used automatically.
+GOOGLE_MAPS_API_KEY = ""
+
+# Map appearance
+MAP_BG_COLOR      = (0.05, 0.05, 0.05, 0.75)
+MAP_BORDER_COLOR  = (0.69, 0.44, 0.63, 0.9)    # mauve
+MAP_BORDER_WIDTH  = 2
+MAP_TRACK_COLOR   = (0.69, 0.44, 0.63, 0.85)   # mauve
+MAP_TRACK_WIDTH   = 2
+MAP_DOT_COLOR     = (1.0,  1.0,  1.0,  1.0)
+MAP_DOT_RADIUS    = 5
+MAP_CORNER_RADIUS = 8
+
+
+# ── Wind indicator ───────────────────────────
+WIND_ENABLED       = True   # Show body-frame wind compass
+WIND_MIN_SPEED_MS  = 0.5    # Hide arrow below this speed (EKF settling)
