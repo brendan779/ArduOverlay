@@ -24,21 +24,18 @@ import sys
 import os
 import argparse
 import math
-import struct
 import subprocess
-import tempfile
-import shutil
+import multiprocessing
+import time
 from pathlib import Path
-from matplotlib.transforms import Affine2D
-from matplotlib.patches import Circle
 
 # ── Dependency check ─────────────────────────────────────────────────────────
 def _check_deps():
     missing = []
     try:
-        import matplotlib
+        from PIL import Image
     except ImportError:
-        missing.append("matplotlib")
+        missing.append("Pillow")
     try:
         from pymavlink import mavutil
     except ImportError:
@@ -51,16 +48,17 @@ def _check_deps():
         print(f"[ERROR] Missing packages: {', '.join(missing)}")
         print(f"        Run: pip3 install {' '.join(missing)} --break-system-packages")
         sys.exit(1)
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+    except FileNotFoundError:
+        print("[ERROR] ffmpeg not found.")
+        print("        Install with: brew install ffmpeg")
+        sys.exit(1)
 
 _check_deps()
 
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import matplotlib.patheffects as pe
-from matplotlib.patches import FancyBboxPatch
+from PIL import Image as PILImage, ImageDraw as IDraw, ImageFont
 from pymavlink import mavutil
 
 # ── Config loader ─────────────────────────────────────────────────────────────
@@ -392,8 +390,6 @@ class OSDRenderer:
         return tuple(int(x * 255) for x in c)
 
     def _init_fonts(self):
-        from PIL import ImageFont
-        import sys
 
         # Locate the fonts directory — try several plausible locations
         candidates = [
@@ -452,7 +448,6 @@ class OSDRenderer:
 
     # ── PIL drawing helpers ───────────────────────────────────────────────
     def _rounded_rect(self, draw, x, y, w, h, r, fill, border=None):
-        from PIL import ImageDraw
         x1, y1 = x + w, y + h
         r = min(r, w // 2, h // 2)
         draw.rectangle([x + r, y, x1 - r, y1], fill=fill)
@@ -506,10 +501,8 @@ class OSDRenderer:
         tape_h  = h - lh - 10
 
         # Clip tape region
-        from PIL import Image as PILImage
         tape_clip = PILImage.new("RGBA", (w, tape_h), (0, 0, 0, 0))
-        from PIL import ImageDraw as ImageDrawLib
-        td = ImageDrawLib.Draw(tape_clip)
+        td = IDraw.Draw(tape_clip)
 
         # Draw ticks and numbers
         px_per_unit = tape_h / self.TAPE_SPAN
@@ -588,8 +581,6 @@ class OSDRenderer:
 
     # ── Widget: artificial horizon ────────────────────────────────────────
     def _draw_horizon(self, img, draw, x, y, w, h, pitch_deg, roll_deg):
-        from PIL import Image as PILImage, ImageDraw as IDraw
-        import math
 
         # Render into a sub-image, then paste with clip
         sub = PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -661,24 +652,23 @@ class OSDRenderer:
         pitch_rot = pitch_sub.rotate(roll_deg, center=(cx, cy),
                                       resample=PILImage.BILINEAR)
         pitch_rot.putalpha(PILImage.fromarray(
-            __import__("numpy").array(pitch_rot)[:, :, 3]))
+            np.array(pitch_rot)[:, :, 3]))
         sub.paste(pitch_rot, (0, 0), pitch_rot)
 
         # ── Roll arc at bottom ────────────────────────────────────────────
         arc_r   = int(w * 0.42)
         arc_cx  = cx
         arc_cy  = h - 8
-        # Draw arc from -60 to +60 deg
+        sd2 = IDraw.Draw(sub)
+        # Draw arc from -60 to +60 deg (reuse sd2 — don't create Draw per iteration)
         for a in range(-60, 61, 1):
             rad = math.radians(a - 90)
             ax_ = int(arc_cx + arc_r * math.cos(rad))
             ay_ = int(arc_cy + arc_r * math.sin(rad))
             col = self.C_TICK_MAJ if a % 30 == 0 else self.C_TICK
-            sub_draw = IDraw.Draw(sub)
-            sub_draw.point((ax_, ay_), fill=col)
+            sd2.point((ax_, ay_), fill=col)
 
         # Tick marks at -60, -30, 0, +30, +60
-        sd2 = IDraw.Draw(sub)
         for a in [-60, -30, 0, 30, 60]:
             rad_out = math.radians(a - 90)
             rad_in  = rad_out
@@ -735,8 +725,6 @@ class OSDRenderer:
 
     # ── Widget: compass ribbon ────────────────────────────────────────────
     def _draw_compass(self, img, draw, x, y, w, h, yaw_deg):
-        from PIL import Image as PILImage, ImageDraw as IDraw
-
         sub = PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
         sd  = IDraw.Draw(sub)
         self._rounded_rect(sd, 0, 0, w, h, 7, self.C_BG, self.C_BORDER)
@@ -847,9 +835,6 @@ class OSDRenderer:
         bearing relative to the aircraft, pointing inward toward the centre.
         Speed text sits in a small badge at the bottom of the ring.
         """
-        from PIL import Image as PILImage, ImageDraw as IDraw
-        import math
-
         sub = PILImage.new("RGBA", (w, h), (0, 0, 0, 0))
         sd  = IDraw.Draw(sub)
 
@@ -1062,7 +1047,6 @@ class OSDRenderer:
 
     # ── Main render ───────────────────────────────────────────────────────
     def render_frame(self, t: float):
-        from PIL import Image as PILImage, ImageDraw as IDraw
         cfg = self.cfg
         log = self.log
 
@@ -1162,9 +1146,8 @@ class OSDRenderer:
         # Rangefinder badge — sits at top-right of alt tape, fully inside
         if rng_m is not None:
             # Render off-screen first to get actual width, then position
-            from PIL import Image as _PI, ImageDraw as _ID
-            tmp = _PI.new("RGBA", (400, 100), (0,0,0,0))
-            td  = _ID.Draw(tmp)
+            tmp = PILImage.new("RGBA", (400, 100), (0,0,0,0))
+            td  = IDraw.Draw(tmp)
             badge_w = self._draw_rng_badge(td, 0, 0, rng_m)
             # Place badge so its right edge sits 4px inside the alt tape edge
             bx = alt_x + TW - badge_w - 4
@@ -1197,7 +1180,7 @@ class OSDRenderer:
         self._draw_messages(draw, msg_x, msg_y, msg_w, msg_h, msgs, t,
                             cfg.MESSAGE_DISPLAY_SECONDS)
 
-        return __import__("numpy").array(img)
+        return np.array(img)
 
 # ── FFmpeg pipe writer ────────────────────────────────────────────────────────
 class VideoWriter:
@@ -1231,6 +1214,18 @@ class VideoWriter:
     def close(self):
         self.proc.stdin.close()
         self.proc.wait()
+
+
+# ── Parallel rendering workers ───────────────────────────────────────────────
+_pool_renderer: OSDRenderer = None  # type: ignore
+
+def _worker_init(cfg_path: str, log: LogData):
+    global _pool_renderer
+    cfg = load_config(cfg_path)
+    _pool_renderer = OSDRenderer(cfg, log)
+
+def _render_worker(t: float) -> np.ndarray:
+    return _pool_renderer.render_frame(t)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -1298,24 +1293,45 @@ def main():
     n_frames = int(duration * fps)
     out_path = cfg.OUTPUT_FILE
 
+    n_workers = max(1, multiprocessing.cpu_count() - 1)
     print(f"[render] {n_frames} frames @ {fps}fps → {out_path}")
-    print(f"[render] Resolution: {cfg.OUTPUT_WIDTH}x{cfg.OUTPUT_HEIGHT}")
+    print(f"[render] Resolution: {cfg.OUTPUT_WIDTH}x{cfg.OUTPUT_HEIGHT}  Workers: {n_workers}")
 
-    renderer = OSDRenderer(cfg, log)
-    writer   = VideoWriter(out_path, cfg.OUTPUT_WIDTH, cfg.OUTPUT_HEIGHT, fps)
+    def fmt_time(s: float) -> str:
+        m, s = divmod(int(s), 60)
+        return f"{m}m{s:02d}s"
 
-    try:
-        for i in range(n_frames):
-            t = i / fps + offset
-            if i % fps == 0:
-                pct = i / n_frames * 100
-                print(f"\r[render] {pct:5.1f}%  {i}/{n_frames}", end="", flush=True)
-            frame = renderer.render_frame(t)
-            writer.write(frame)
-    except KeyboardInterrupt:
-        print("\n[interrupted]")
-    finally:
-        writer.close()
+    times  = [i / fps + offset for i in range(n_frames)]
+    writer = VideoWriter(out_path, cfg.OUTPUT_WIDTH, cfg.OUTPUT_HEIGHT, fps)
+    interrupted = False
+    render_start = time.monotonic()
+
+    with multiprocessing.Pool(
+        processes=n_workers,
+        initializer=_worker_init,
+        initargs=(config_path, log),
+    ) as pool:
+        try:
+            for i, frame in enumerate(pool.imap(_render_worker, times, chunksize=1)):
+                if i % int(fps) == 0:
+                    elapsed = time.monotonic() - render_start
+                    pct = i / n_frames
+                    eta = (elapsed / pct - elapsed) if pct > 0 else 0
+                    print(
+                        f"\r[render] {pct*100:5.1f}%  {i}/{n_frames}"
+                        f"  elapsed {fmt_time(elapsed)}  eta {fmt_time(eta)}   ",
+                        end="", flush=True,
+                    )
+                writer.write(frame)
+        except KeyboardInterrupt:
+            pool.terminate()
+            interrupted = True
+            print("\n[interrupted]")
+        finally:
+            writer.close()
+
+    if interrupted:
+        return
 
     print(f"\n[done] Saved: {out_path}")
     print()
