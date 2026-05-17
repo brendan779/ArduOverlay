@@ -23,11 +23,7 @@ Options:
 import sys
 import os
 import argparse
-import math
-import struct
 import subprocess
-import tempfile
-import shutil
 from pathlib import Path
 
 # ── Dependency check ─────────────────────────────────────────────────────────
@@ -56,8 +52,6 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import matplotlib.patheffects as pe
 from matplotlib.patches import FancyBboxPatch
 from pymavlink import mavutil
 
