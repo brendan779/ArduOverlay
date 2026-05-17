@@ -25,6 +25,7 @@ import os
 import argparse
 import subprocess
 import multiprocessing
+import time
 from pathlib import Path
 
 # ── Dependency check ─────────────────────────────────────────────────────────
@@ -615,7 +616,12 @@ def main():
     times  = [i / fps + offset for i in range(n_frames)]
     writer = VideoWriter(out_path, cfg.OUTPUT_WIDTH, cfg.OUTPUT_HEIGHT, fps)
 
+    def fmt_time(seconds: float) -> str:
+        m, s = divmod(int(seconds), 60)
+        return f"{m}m{s:02d}s"
+
     interrupted = False
+    render_start = time.monotonic()
     with multiprocessing.Pool(
         processes=n_workers,
         initializer=_worker_init,
@@ -624,8 +630,15 @@ def main():
         try:
             for i, frame in enumerate(pool.imap(_render_worker, times, chunksize=1)):
                 if i % int(fps) == 0:
-                    pct = i / n_frames * 100
-                    print(f"\r[render] {pct:5.1f}%  {i}/{n_frames}", end="", flush=True)
+                    elapsed = time.monotonic() - render_start
+                    pct = i / n_frames
+                    eta = (elapsed / pct - elapsed) if pct > 0 else 0
+                    print(
+                        f"\r[render] {pct*100:5.1f}%  {i}/{n_frames}"
+                        f"  elapsed {fmt_time(elapsed)}"
+                        f"  eta {fmt_time(eta)}   ",
+                        end="", flush=True,
+                    )
                 writer.write(frame)
         except KeyboardInterrupt:
             pool.terminate()
