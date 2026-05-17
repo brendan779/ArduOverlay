@@ -24,6 +24,7 @@ import sys
 import os
 import argparse
 import subprocess
+import multiprocessing
 from pathlib import Path
 
 # ── Dependency check ─────────────────────────────────────────────────────────
@@ -44,6 +45,12 @@ def _check_deps():
     if missing:
         print(f"[ERROR] Missing packages: {', '.join(missing)}")
         print(f"        Run: pip3 install {' '.join(missing)} --break-system-packages")
+        sys.exit(1)
+    try:
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+    except FileNotFoundError:
+        print("[ERROR] ffmpeg not found.")
+        print("        Install with: brew install ffmpeg")
         sys.exit(1)
 
 _check_deps()
@@ -524,6 +531,18 @@ class VideoWriter:
         self.proc.wait()
 
 
+# ── Parallel rendering workers ───────────────────────────────────────────────
+_pool_renderer: OSDRenderer = None  # type: ignore
+
+def _worker_init(cfg_path: str, log: LogData):
+    global _pool_renderer
+    cfg = load_config(cfg_path)
+    _pool_renderer = OSDRenderer(cfg, log)
+
+def _render_worker(t: float) -> np.ndarray:
+    return _pool_renderer.render_frame(t)
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser(description="ArduPilot OSD overlay generator")
@@ -589,24 +608,34 @@ def main():
     n_frames = int(duration * fps)
     out_path = cfg.OUTPUT_FILE
 
+    n_workers = max(1, multiprocessing.cpu_count() - 1)
     print(f"[render] {n_frames} frames @ {fps}fps → {out_path}")
-    print(f"[render] Resolution: {cfg.OUTPUT_WIDTH}x{cfg.OUTPUT_HEIGHT}")
+    print(f"[render] Resolution: {cfg.OUTPUT_WIDTH}x{cfg.OUTPUT_HEIGHT}  Workers: {n_workers}")
 
-    renderer = OSDRenderer(cfg, log)
-    writer   = VideoWriter(out_path, cfg.OUTPUT_WIDTH, cfg.OUTPUT_HEIGHT, fps)
+    times  = [i / fps + offset for i in range(n_frames)]
+    writer = VideoWriter(out_path, cfg.OUTPUT_WIDTH, cfg.OUTPUT_HEIGHT, fps)
 
-    try:
-        for i in range(n_frames):
-            t = i / fps + offset
-            if i % fps == 0:
-                pct = i / n_frames * 100
-                print(f"\r[render] {pct:5.1f}%  {i}/{n_frames}", end="", flush=True)
-            frame = renderer.render_frame(t)
-            writer.write(frame)
-    except KeyboardInterrupt:
-        print("\n[interrupted]")
-    finally:
-        writer.close()
+    interrupted = False
+    with multiprocessing.Pool(
+        processes=n_workers,
+        initializer=_worker_init,
+        initargs=(config_path, log),
+    ) as pool:
+        try:
+            for i, frame in enumerate(pool.imap(_render_worker, times, chunksize=1)):
+                if i % int(fps) == 0:
+                    pct = i / n_frames * 100
+                    print(f"\r[render] {pct:5.1f}%  {i}/{n_frames}", end="", flush=True)
+                writer.write(frame)
+        except KeyboardInterrupt:
+            pool.terminate()
+            interrupted = True
+            print("\n[interrupted]")
+        finally:
+            writer.close()
+
+    if interrupted:
+        return
 
     print(f"\n[done] Saved: {out_path}")
     print()
