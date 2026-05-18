@@ -732,7 +732,7 @@ class OSDRenderer:
         CARDS = {0:'N', 45:'NE', 90:'E', 135:'SE',
                  180:'S', 225:'SW', 270:'W', 315:'NW'}
         px_per_deg = w / 80.0   # 80° visible range
-        tick_area_h = h - 14    # reserve bottom for heading readout
+        tick_area_h = h
 
         for offset in range(-45, 46):
             deg = (yaw_deg + offset) % 360
@@ -765,19 +765,6 @@ class OSDRenderer:
         tri_x = w // 2
         sd.polygon([(tri_x, 0), (tri_x - 4, 5), (tri_x + 4, 5)],
                    fill=(255, 210, 0, 200))
-
-        # Heading readout centred at bottom
-        hdg_txt = f"{int(yaw_deg):03d}°"
-        hf = self._fonts["hdg"]
-        hw, hh = self._text_size(sd, hdg_txt, hf)
-        bg_pad = 3
-        bg_x = w // 2 - hw // 2 - bg_pad
-        bg_y = h - hh - 3 - bg_pad
-        sd.rounded_rectangle([bg_x, bg_y, bg_x + hw + bg_pad * 2,
-                               bg_y + hh + bg_pad * 2],
-                              radius=3, fill=(8, 8, 14, 185))
-        sd.text((w // 2 - hw // 2, bg_y + bg_pad), hdg_txt,
-                font=hf, fill=self.C_CURSOR)
 
         img.paste(sub, (x, y), sub)
 
