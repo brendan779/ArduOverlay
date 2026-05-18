@@ -373,8 +373,8 @@ class OSDRenderer:
         self.BOX_R       = 18
         self.GAP         = 22
         self.GAP_SM      = 14
-        self.TAPE_W      = 150
-        self.AH_W        = 360
+        self.TAPE_W      = 270
+        self.AH_W        = 440
         self.COMPASS_H   = 56
         self.VAS_W       = 60
         self.MODE_W      = 240
@@ -487,7 +487,8 @@ class OSDRenderer:
     # ── Widget: vertical tape ─────────────────────────────────────────────
     def _draw_tape(self, img, draw, x, y, w, h, value, unit_str, label_str,
                    step=10, minor_step=2):
-        """Vertical scrolling tape — numbers increase upward."""
+        """Vertical tape — scale numbers sit left of the ticks, readout box
+        on the right so it never covers the sliding numbers."""
         # Background box
         self._rounded_rect(draw, x, y, w, h, self.BOX_R, self.C_BG, self.C_BORDER)
 
@@ -500,84 +501,77 @@ class OSDRenderer:
         tape_y0 = y + lh + 10
         tape_h  = h - lh - 10
 
-        # Clip tape region
+        # ── Layout zones (left → right): numbers | ticks | readout box ────
+        nf        = self._fonts["tape_num"]
+        num_w, _  = self._text_size(draw, "0000", nf)
+        num_right = 8 + num_w            # numbers right-align here
+        tick_x0   = num_right + 8        # ticks start just right of numbers
+        tick_maj  = max(12, int(w * 0.06))
+        tick_min  = tick_maj // 2
+        box_gap   = 12
+        box_x     = tick_x0 + tick_maj + box_gap
+
+        # ── Tape clip: ticks + scale numbers ──────────────────────────────
         tape_clip = PILImage.new("RGBA", (w, tape_h), (0, 0, 0, 0))
         td = IDraw.Draw(tape_clip)
 
-        # Draw ticks and numbers
         px_per_unit = tape_h / self.TAPE_SPAN
         centre_val  = value
-
-        # Range to draw
         val_min = centre_val - self.TAPE_SPAN / 2 - step
         val_max = centre_val + self.TAPE_SPAN / 2 + step
         v = math.floor(val_min / minor_step) * minor_step
 
-        # Calculate vertical clearance zone around cursor (cursor will be drawn
-        # later; we need to skip tape numbers that would land inside it).
-        cf_pre   = self._fonts["cursor"]
-        uf_pre   = self._fonts["cursor_u"]
-        _, ch_pre = self._text_size(td, "000", cf_pre)
-        _, uh_pre = self._text_size(td, "km/h", uf_pre)
-        cursor_total = ch_pre + 4 + uh_pre
-        cursor_pad_v = int(cursor_total * 0.15)
-        cursor_clearance = cursor_total + cursor_pad_v * 2 + 6  # +6 extra margin
-        cursor_top = tape_h // 2 - cursor_clearance // 2
-        cursor_bot = tape_h // 2 + cursor_clearance // 2
-
         while v <= val_max:
             py_tape = int(tape_h / 2 - (v - centre_val) * px_per_unit)
             if 0 <= py_tape <= tape_h:
-                is_major = (round(v) % step == 0)
+                is_major   = (round(v) % step == 0)
                 tick_color = self.C_TICK_MAJ if is_major else self.C_TICK
-                tick_len   = 10 if is_major else 5
-                # tick on left side
-                td.line([(4, py_tape), (4 + tick_len, py_tape)], fill=tick_color, width=1)
-                # skip numbers that would land behind the cursor
-                if is_major and round(v) != round(centre_val) and \
-                   not (cursor_top - 8 <= py_tape <= cursor_bot + 8):
-                    nf  = self._fonts["tape_num"]
-                    ntxt = f"{int(round(v))}"
+                tick_len   = tick_maj if is_major else tick_min
+                td.line([(tick_x0, py_tape), (tick_x0 + tick_len, py_tape)],
+                        fill=tick_color, width=1)
+                if is_major:
+                    ntxt   = f"{int(round(v))}"
                     nw, nh = self._text_size(td, ntxt, nf)
-                    td.text((w - 6 - nw, py_tape - nh // 2), ntxt,
+                    td.text((num_right - nw, py_tape - nh // 2), ntxt,
                             font=nf, fill=self.C_TICK_MAJ)
             v += minor_step
 
         img.paste(tape_clip, (x, tape_y0), tape_clip)
 
-        # Cursor box — both width AND height driven by actual font metrics
-        val_txt  = f"{value:.0f}"
-        cf       = self._fonts["cursor"]
-        uf       = self._fonts["cursor_u"]
-        cw2, ch2 = self._text_size(draw, val_txt, cf)
-        uw2, uh2 = self._text_size(draw, unit_str, uf)
-        total_h  = ch2 + 4 + uh2
-        pad_v    = int(total_h * 0.15)
-        pad_h    = int(ch2 * 0.30)
-        cur_h    = total_h + pad_v * 2
-        cur_y    = tape_y0 + tape_h // 2 - cur_h // 2
-        ptr_w    = max(10, int(w * 0.08))
-        # Width: fit the widest of value/unit, plus padding, with a minimum
-        # so very short numbers don't make tiny boxes.
-        content_w = max(cw2, uw2) + pad_h * 2
-        min_w     = w - ptr_w - 4   # at least the tape's inner width
-        cur_w     = max(min_w, content_w)
-        cur_x     = x + ptr_w + 2
+        # ── Readout box on the right ──────────────────────────────────────
+        val_txt = f"{value:.0f}"
+        cf      = self._fonts["cursor"]
+        uf      = self._fonts["cursor_u"]
+        # Full bounding boxes — draw.text places text by the em-box top, not
+        # the glyph top, so we keep the offsets and compensate when drawing.
+        vbb = draw.textbbox((0, 0), val_txt, font=cf)
+        ubb = draw.textbbox((0, 0), unit_str, font=uf)
+        vw, vh = vbb[2] - vbb[0], vbb[3] - vbb[1]
+        uw, uh = ubb[2] - ubb[0], ubb[3] - ubb[1]
+        gap_vu  = 4
+        total_h = vh + gap_vu + uh
+        pad_v   = int(total_h * 0.22)
+        cur_h   = total_h + pad_v * 2
+        cur_y   = tape_y0 + tape_h // 2 - cur_h // 2
+        cur_x   = x + box_x
+        cur_w   = w - box_x - 6
+        mid_y   = cur_y + cur_h // 2
 
-        # Pointer triangle
-        mid_y = cur_y + cur_h // 2
-        pts = [(x + 1,          mid_y),
-               (x + ptr_w + 1,  mid_y - ptr_w // 2),
-               (x + ptr_w + 1,  mid_y + ptr_w // 2)]
-        draw.polygon(pts, fill=self.C_TAPE_PTR)
+        # Pointer triangle — points left from the box toward the ticks
+        ptr_w = max(10, int(w * 0.05))
+        draw.polygon([(cur_x - 1,         mid_y - ptr_w),
+                      (cur_x - 1,         mid_y + ptr_w),
+                      (cur_x - 1 - ptr_w, mid_y)], fill=self.C_TAPE_PTR)
 
-        self._rounded_rect(draw, cur_x, cur_y, cur_w, cur_h, 5,
+        self._rounded_rect(draw, cur_x, cur_y, cur_w, cur_h, 6,
                             self.C_CURSOR_BG, (255, 255, 255, 55))
-        cx_mid = cur_x + cur_w // 2
-        val_y  = cur_y + pad_v
-        draw.text((cx_mid - cw2 // 2, val_y), val_txt, font=cf, fill=self.C_CURSOR)
-        unit_y = val_y + ch2 + 4
-        draw.text((cx_mid - uw2 // 2, unit_y), unit_str, font=uf, fill=self.C_LABEL)
+        cx_mid   = cur_x + cur_w // 2
+        val_top  = cur_y + pad_v
+        draw.text((cx_mid - vw // 2 - vbb[0], val_top - vbb[1]),
+                  val_txt, font=cf, fill=self.C_CURSOR)
+        unit_top = val_top + vh + gap_vu
+        draw.text((cx_mid - uw // 2 - ubb[0], unit_top - ubb[1]),
+                  unit_str, font=uf, fill=self.C_LABEL)
 
     # ── Widget: artificial horizon ────────────────────────────────────────
     def _draw_horizon(self, img, draw, x, y, w, h, pitch_deg, roll_deg):
